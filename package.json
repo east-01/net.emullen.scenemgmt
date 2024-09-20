@@ -1,0 +1,18 @@
+{
+  "name": "net.emullen.scenemgmt",
+  "version": "1.0.0",
+  "displayName": "Scene Management",
+  "description": "Scene manager, sync scenes with network.",
+  "unity": "2021.3",
+  "unityRelease": "17f1",
+  "documentationUrl": "",
+  "changelogUrl": "",
+  "licensesUrl": "",
+  "dependencies": {},
+  "keywords": [],
+  "author": {
+    "name": "Ethan Mullen",
+    "email": "mullen.ethan@yahoo.com",
+    "url": "https://www.emullen.net"
+  }
+}

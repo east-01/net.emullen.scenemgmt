@@ -1,0 +1,22 @@
+{
+    "name": "SceneMgmt",
+    "rootNamespace": "EMullen.SceneMgmt",
+    "references": [
+        "Unity.InputSystem",
+        "Unity.TextMeshPro",
+        "Bootstrapper",
+        "Core",
+        "FishNet.Runtime",
+        "FishNet.Serializing"
+    ],
+    "optionalUnityReferences": [],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
