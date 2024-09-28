@@ -4,10 +4,11 @@ using FishNet.Connection;
 using FishNet.Managing.Scened;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using Newtonsoft.Json.Linq;
 
 namespace EMullen.SceneMgmt 
 {
-        /// <summary>
+    /// <summary>
     /// To be paired with SceneLookupData to hold relevant scene elements in the SceneDelegate
     /// </summary>
     [Serializable]
