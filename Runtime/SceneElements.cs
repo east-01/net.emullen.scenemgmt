@@ -15,6 +15,7 @@ namespace EMullen.SceneMgmt
     public struct SceneElements {
         [SerializeField]
         private SceneLookupData lookupData;
+        public readonly SceneLookupData LookupData => lookupData;
 
         private Scene scene;
         /// <summary>
@@ -31,37 +32,6 @@ namespace EMullen.SceneMgmt
                 lookupData = new(value.handle, value.name);
             }
         }
-
-        // [SerializeField]
-        // private GameLobby owner;
-        // /// <summary>
-        // /// Only usable on the server side. Can be null if no lobby claims.
-        // /// </summary>
-        // public GameLobby Owner {
-        //     readonly get { return owner; }
-        //     set {
-        //         if(owner != null) {
-        //             Debug.LogError("Can't set owner since one already exists.");
-        //             return;
-        //         }
-        //         owner = value;
-        //     }
-        // }
-        // public bool HasOwner { get { return owner != null; } }
-
-        // [SerializeField]
-        // private GameplayManager gameplayManager;
-        // /// <summary>
-        // /// The GameplayManager held in this scene. Can be null if a lobby scene.
-        // /// </summary>
-        // public GameplayManager GameplayManager {
-        //     get {
-        //         if(gameplayManager == null) {
-        //             gameplayManager = GameplayManagerDelegate.LocateGameplayManager(scene);
-        //         }
-        //         return gameplayManager;
-        //     }
-        // }
 
         [SerializeField]
         private List<NetworkConnection> clients;
