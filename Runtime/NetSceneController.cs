@@ -211,8 +211,13 @@ namespace EMullen.SceneMgmt {
                 return;
             }
 
+            BLog.Highlight("Adding client to scene");
+
             base.SceneManager.AddConnectionToScene(client, loadedScenes[serverSceneLookupData].Scene);
-            TargetRpcClientAddedToScene(client, serverSceneLookupData);
+            if(IsServerOnlyInitialized)
+                TargetRpcClientAddedToScene(client, serverSceneLookupData);
+            else
+                SceneController.Instance.NetSceneController_InvokeClientAddedToSceneEvent(client, serverSceneLookupData); 
         }
 
         [Server]
@@ -314,16 +319,20 @@ namespace EMullen.SceneMgmt {
                 SceneController.Instance.LoadScene(serverSceneLookupData, true);
             } else {
                 BLog.Log($"SceneDelegate#TargetRpcEnsureSceneLoaded: Scene \"{serverSceneLookupData.Name}\" is already loaded, skipping to SceneDelegate#ServerRpcClientLoadedScene", SceneController.Instance.logSettings, 0);
-                ServerRpcClientLoadedScene(base.LocalConnection, serverSceneLookupData);
+                ClientLoadedScene(base.LocalConnection, serverSceneLookupData);
             }
         }
 
         /// <summary>
         /// Signal to the server that the client has loaded the specified scene.
         /// </summary>
-        [ServerRpc(RequireOwnership = false)]
-        public void ServerRpcClientLoadedScene(NetworkConnection client, SceneLookupData serverSceneLookupData) 
-        {      
+        public void ClientLoadedScene(NetworkConnection client, SceneLookupData serverSceneLookupData) 
+        {
+            if(!IsServerInitialized) {
+                ServerRpcClientLoadedScene(client, serverSceneLookupData);
+                return;
+            }
+
             if(serverSceneLookupData == null) {
                 Debug.LogWarning("Client loaded scene call has null serverSceneLookupData.");
                 return;      
@@ -340,6 +349,9 @@ namespace EMullen.SceneMgmt {
             BLog.Log($"Called ServerRPCClientLoadedScene for client {client} with data {serverSceneLookupData}", SceneController.Instance.logSettings, 3);
             Internal_AddClientToScene(client, serverSceneLookupData);
         }
+
+        [ServerRpc(RequireOwnership = false)]
+        public void ServerRpcClientLoadedScene(NetworkConnection client, SceneLookupData serverSceneLookupData) => ClientLoadedScene(client, serverSceneLookupData);
 #endregion
 
 #region Getters/Setters

@@ -150,8 +150,9 @@ namespace EMullen.SceneMgmt {
         /// <summary>
         /// The client side scene manager load event
         /// </summary>
-        private void UnitySceneManager_SceneLoaded(Scene scene, LoadSceneMode loadSceneMode) 
+        private void UnitySceneManager_SceneLoaded(Scene scene, LoadSceneMode loadSceneMode)  
         {
+            BLog.Highlight("!!!!");
             // We don't care about the server side of this event
             if(InstanceFinder.IsServerOnlyStarted)
                 return;
@@ -169,13 +170,14 @@ namespace EMullen.SceneMgmt {
                 Debug.LogWarning("Scene load didn't match load target.");
                 return;
             }
+            BLog.Highlight("!!!!asdasda");
 
             // Only register the scene if we're not in a local instance, this is because the FishNet register method will do it
             if(StandaloneServer)
                 NetSceneController.Instance.RegisterScene(scene);
 
             BLog.Log($"SceneDelegate#UnitySceneManager_SceneLoaded: Client loaded scene \"{scene.name}\"", logSettings, 0);
-            NetSceneController.Instance.ServerRpcClientLoadedScene(NetSceneController.Instance.LocalConnection, clientLoadTarget);
+            NetSceneController.Instance.ClientLoadedScene(NetSceneController.Instance.LocalConnection, clientLoadTarget);
         }
 
         private void UnitySceneManager_SceneUnloaded(Scene scene) 
