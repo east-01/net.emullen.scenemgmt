@@ -116,11 +116,17 @@ namespace EMullen.SceneMgmt {
         { 
             UnityEngine.SceneManagement.SceneManager.sceneLoaded += UnitySceneManager_SceneLoaded;
             UnityEngine.SceneManagement.SceneManager.sceneUnloaded += UnitySceneManager_SceneUnloaded;
+
+            InstanceFinder.ClientManager.RegisterBroadcast<SceneSetBroadcast>(RecieveClientSceneSetBroadcast);
+            InstanceFinder.ServerManager.RegisterBroadcast<SceneSetBroadcast>(RecieveServerSceneSetBroadcast);
         }
 
         private void OnDisable() { 
             UnityEngine.SceneManagement.SceneManager.sceneLoaded -= UnitySceneManager_SceneLoaded;
             UnityEngine.SceneManagement.SceneManager.sceneUnloaded -= UnitySceneManager_SceneUnloaded;
+
+            InstanceFinder.ClientManager.UnregisterBroadcast<SceneSetBroadcast>(RecieveClientSceneSetBroadcast);
+            InstanceFinder.ServerManager.UnregisterBroadcast<SceneSetBroadcast>(RecieveServerSceneSetBroadcast);
         }
 #endregion
 
@@ -188,6 +194,16 @@ namespace EMullen.SceneMgmt {
             if(!NetSceneController.Instance.IsSceneRegistered(lookupData))
                 return;
             NetSceneController.Instance.DeregisterScene(lookupData);
+        }
+
+        private void RecieveClientSceneSetBroadcast(SceneSetBroadcast msg, Channel channel) 
+        {
+
+        }
+
+        private void RecieveServerSceneSetBroadcast(NetworkConnection conn, SceneSetBroadcast msg, Channel channel) 
+        {
+            
         }
 #endregion
 
