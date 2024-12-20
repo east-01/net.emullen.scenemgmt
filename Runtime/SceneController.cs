@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using EMullen.Core;
 using FishNet;
 using FishNet.Connection;
@@ -28,60 +29,34 @@ namespace EMullen.SceneMgmt {
 
         public BLogChannel logSettings;
 
-        public bool StandaloneServer;
+        private SceneLookupData ActiveSceneLookupData => UnityEngine.SceneManagement.SceneManager.GetActiveScene().GetSceneLookupData();
+        private List<SceneLookupData> LoadedScenes => BuildProcessor.Scenes.ToList()
+        .Where(bss => {
+            Scene scene = UnityEngine.SceneManagement.SceneManager.GetSceneByBuildIndex(bss.index);
+            return bss.enabled && scene.isLoaded;
+        }).Select(bss => {
+            return UnityEngine.SceneManagement.SceneManager.GetSceneByBuildIndex(bss.index).GetSceneLookupData();
+        }).ToList();
+
         /// <summary>
-        /// Client side only, the data that we're trying to get the client to load
+        /// For the server: A dictionary containing the client connections and that client's list
+        ///   of target scenes.
         /// </summary>
-        public SceneLookupData clientLoadTarget;
+        private Dictionary<NetworkConnection, List<SceneLookupData>> targetScenes;
 
-#if FISHNET
-        [SerializeField]
-        private GameObject NetworkedSceneControllerPrefab;
-
-        private NetworkManager networkManager;
-#endif
-
-#region Events
-        public delegate void SceneRegisteredHandler(SceneLookupData sceneLookupData); // We don't provide SceneElements here to require users of event to go through SceneDelegate
         /// <summary>
-        /// Called when a scene is registered with the SceneDelegate
+        /// For clients: The target list of scene lookup datas as specified by the server from a 
+        ///   SceneSyncBroadcast.
         /// </summary>
-        public event SceneRegisteredHandler SceneRegisteredEvent;
-        /// <summary>SHOULD ONLY BE USED BY NetSceneController!! Will issue SceneController events.</summary>
-        internal void NetSceneController_InvokeSceneRegisteredEvent(SceneLookupData sceneLookupData) { SceneRegisteredEvent?.Invoke(sceneLookupData); }
+        private List<SceneLookupData> clientTargetScenes;
 
-        public delegate void SceneWillUnloadHandler(string unloadingScene, string loadingScene);
+        public delegate void LoadedTargetScenesHandler(List<SceneLookupData> loadedScenes, NetworkConnection connection = null);
         /// <summary>
-        /// Called before the UnitySceneManager loads a new Scene.
+        /// Event call signaling a client has loaded their target scenes.
+        /// Comes with the list of SceneLookupDatas that we're loaded and, if running as the
+        ///   server, a NetworkConnection indicating who loaded what scene.
         /// </summary>
-        public event SceneWillUnloadHandler SceneWillUnloadEvent;
-
-        public delegate void SceneWillDeregisterHandler(SceneLookupData sceneLookupData); // No SceneElements here, see scene registered handler
-        /// <summary>
-        /// Called when a scene is told to unload on the server but before the unload actually happens.
-        /// In place to allow things in the scene to wrap up properly.
-        /// </summary>
-        public event SceneWillDeregisterHandler SceneWillDeregisterEvent;
-        /// <summary>SHOULD ONLY BE USED BY NetSceneController!! Will issue SceneController events.</summary>
-        internal void NetSceneController_InvokeSceneWillDeregisterEvent(SceneLookupData sceneLookupData) { SceneWillDeregisterEvent?.Invoke(sceneLookupData); }
-
-        public delegate void SceneDeregisteredHandler(SceneLookupData sceneLookupData); // No SceneElements here, see scene registered handler
-        /// <summary>
-        /// Called when a scene is deregistered with the scene delegate;
-        /// </summary>
-        public event SceneDeregisteredHandler SceneDeregisteredEvent;
-        /// <summary>SHOULD ONLY BE USED BY NetSceneController!! Will issue SceneController events.</summary>
-        internal void NetSceneController_InvokeSceneDeregisteredEvent(SceneLookupData sceneLookupData) { SceneDeregisteredEvent?.Invoke(sceneLookupData); }
-
-        public delegate void ClientAddedToSceneHandler(NetworkConnection client, SceneLookupData sceneLookupData);
-        /// <summary>
-        /// Called when a client is added to the scene.
-        /// For now, only is called on the client that was added.
-        /// </summary>
-        public event ClientAddedToSceneHandler ClientAddedToSceneEvent;
-        /// <summary>SHOULD ONLY BE USED BY NetSceneController!! Will issue SceneController events.</summary>
-        internal void NetSceneController_InvokeClientAddedToSceneEvent(NetworkConnection client, SceneLookupData sceneLookupData) { ClientAddedToSceneEvent?.Invoke(client, sceneLookupData); }
-#endregion
+        public event LoadedTargetScenesHandler LoadedTargetScenes;
 
 #region Initializers
         private void Awake() 
@@ -93,154 +68,125 @@ namespace EMullen.SceneMgmt {
             Instance = this;
             DontDestroyOnLoad(this);
 
-#if FISHNET
-            SubscribeToNetworkEvents();
-#endif
         }
-
-        private void Update() 
-        {
-#if FISHNET
-            SubscribeToNetworkEvents();
-#endif
-        }
-
-        private void OnDestroy() 
-        {
-#if FISHNET
-            UnsubscribeFromNetworkEvents();
-#endif
-        }
-
+        
         private void OnEnable() 
         { 
             UnityEngine.SceneManagement.SceneManager.sceneLoaded += UnitySceneManager_SceneLoaded;
             UnityEngine.SceneManagement.SceneManager.sceneUnloaded += UnitySceneManager_SceneUnloaded;
 
-            InstanceFinder.ClientManager.RegisterBroadcast<SceneSetBroadcast>(RecieveClientSceneSetBroadcast);
-            InstanceFinder.ServerManager.RegisterBroadcast<SceneSetBroadcast>(RecieveServerSceneSetBroadcast);
+            InstanceFinder.ClientManager.RegisterBroadcast<SceneSyncBroadcast>(OnSceneSync);
+            InstanceFinder.ServerManager.RegisterBroadcast<ClientSceneChangeBroadcast>(OnClientSceneChange);
         }
 
         private void OnDisable() { 
             UnityEngine.SceneManagement.SceneManager.sceneLoaded -= UnitySceneManager_SceneLoaded;
             UnityEngine.SceneManagement.SceneManager.sceneUnloaded -= UnitySceneManager_SceneUnloaded;
 
-            InstanceFinder.ClientManager.UnregisterBroadcast<SceneSetBroadcast>(RecieveClientSceneSetBroadcast);
-            InstanceFinder.ServerManager.UnregisterBroadcast<SceneSetBroadcast>(RecieveServerSceneSetBroadcast);
+            InstanceFinder.ClientManager.UnregisterBroadcast<SceneSyncBroadcast>(OnSceneSync);
+            InstanceFinder.ServerManager.UnregisterBroadcast<ClientSceneChangeBroadcast>(OnClientSceneChange);
         }
 #endregion
 
-#region Scene Loading
         /// <summary>
-        /// Load a scene for the client using the UnityEngine SceneManager.
-        /// Will only be tracked by the SceneManager if shouldTrack = true
+        /// Server only.
+        /// Tell the connection to load a specific set of scenes. This will store the target scene
+        ///   list on the server in targetScenes.
         /// </summary>
-        /// <param name="shouldTrack">Track the scene in the scene manager</param>
-        public void LoadScene(SceneLookupData lookupData, bool shouldTrack) 
+        /// <param name="sceneLoadSet">The </param>
+        public void LoadScenesOnConnection(NetworkConnection conn, List<SceneLookupData> sceneLoadSet) 
         {
-            // Call will deregister event for the active scene
-            BLog.Log($"Loading scene \"{lookupData}\" as client, shouldTrack: {shouldTrack}", logSettings, 0);
-            if(NetSceneController.IsReady)
-                BLog.Log($"LoadSceneAsClient: Is active scene \"{ActiveSceneLookupData}\" registered: {NetSceneController.Instance.IsSceneRegistered(ActiveSceneLookupData)}", logSettings, 2);
-            if(NetSceneController.IsReady && NetSceneController.Instance.IsSceneRegistered(ActiveSceneLookupData))
-                SceneWillDeregisterEvent?.Invoke(ActiveSceneLookupData);
+            if(!InstanceFinder.IsServerStarted)
+                throw new InvalidOperationException("Can't load scenes for client. Server isn't started.");
 
-            clientLoadTarget = shouldTrack ? lookupData : null;
-
-            SceneWillUnloadEvent?.Invoke(UnityEngine.SceneManagement.SceneManager.GetActiveScene().name, lookupData.Name);
-            UnityEngine.SceneManagement.SceneManager.LoadScene(lookupData.Name, LoadSceneMode.Single);
+            SceneSyncBroadcast broadcast = new(sceneLoadSet);
+            InstanceFinder.ServerManager.Broadcast(conn, broadcast);
         }
-#endregion
 
 #region Event Handlers
         /// <summary>
-        /// The client side scene manager load event
+        /// Unity scene manager scene loaded event callback. Used by clients to notify the server
+        ///   of local scene changes.
         /// </summary>
         private void UnitySceneManager_SceneLoaded(Scene scene, LoadSceneMode loadSceneMode)  
         {
-            BLog.Highlight("!!!!");
-            // We don't care about the server side of this event
-            if(InstanceFinder.IsServerOnlyStarted)
-                return;
-            if(!NetSceneController.IsReady)
+            // We're only synchronizing the clients.
+            if(InstanceFinder.IsClientStarted)
                 return;
 
-            BLog.Log("LoadedScenes#UnitySceneManager_SceneLoaded: Validated client loaded, scene. Disconnecting them from their other scenes.", logSettings, 0);
-            NetSceneController.Instance.ServerRpcRemoveClientFromScene(NetSceneController.Instance.LocalConnection);
+            BLog.Log($"SceneController loaded \"{scene.name}\". Signaling to server.", logSettings, 0);
+            ClientSceneChangeBroadcast broadcast = ClientSceneChangeBroadcast.LoadBroadcastFactory(LoadedScenes, scene.GetSceneLookupData(), loadSceneMode);
+            InstanceFinder.ClientManager.Broadcast(broadcast);
 
-            // If the client load target is null, we're not tracking this scene load
-            if(clientLoadTarget == null)
-                return;
-
-            if(scene != null && clientLoadTarget is not null && scene.name != clientLoadTarget.Name) {
-                Debug.LogWarning("Scene load didn't match load target.");
-                return;
+            if(LoadedScenes != null && clientTargetScenes != null && LoadedScenes.ToHashSet().SetEquals(clientTargetScenes.ToHashSet())) {
+                LoadedTargetScenes?.Invoke(clientTargetScenes);
+                clientTargetScenes = null;
+                BLog.Log("Loaded target scenes locally.", logSettings, 1);
             }
-            BLog.Highlight("!!!!asdasda");
-
-            // Only register the scene if we're not in a local instance, this is because the FishNet register method will do it
-            if(StandaloneServer)
-                NetSceneController.Instance.RegisterScene(scene);
-
-            BLog.Log($"SceneDelegate#UnitySceneManager_SceneLoaded: Client loaded scene \"{scene.name}\"", logSettings, 0);
-            NetSceneController.Instance.ClientLoadedScene(NetSceneController.Instance.LocalConnection, clientLoadTarget);
         }
 
         private void UnitySceneManager_SceneUnloaded(Scene scene) 
         {
-            if(!NetSceneController.IsReady)
-                return;
-            SceneLookupData lookupData = new(scene.handle, scene.name);
-            if(!NetSceneController.Instance.IsSceneRegistered(lookupData))
-                return;
-            NetSceneController.Instance.DeregisterScene(lookupData);
-        }
-
-        private void RecieveClientSceneSetBroadcast(SceneSetBroadcast msg, Channel channel) 
-        {
-
-        }
-
-        private void RecieveServerSceneSetBroadcast(NetworkConnection conn, SceneSetBroadcast msg, Channel channel) 
-        {
-            
-        }
-#endregion
-
-#region Networked scene controller
-        private void SubscribeToNetworkEvents() 
-        {
-            if(networkManager != null)
+            // We're only synchronizing the clients.
+            if(InstanceFinder.IsClientStarted)
                 return;
 
-            networkManager = InstanceFinder.NetworkManager;
-            networkManager.ServerManager.OnServerConnectionState += ServerManager_OnServerConnectionState;
-
-            BLog.Log("Subscribed to network events.", logSettings, 1);
+            BLog.Log($"SceneController unloaded \"{scene.name}\". Signaling to server.", logSettings, 0);
+            ClientSceneChangeBroadcast broadcast = ClientSceneChangeBroadcast.UnloadBroadcastFactory(LoadedScenes, scene.GetSceneLookupData());
+            InstanceFinder.ClientManager.Broadcast(broadcast);
         }
 
-        private void UnsubscribeFromNetworkEvents() 
+        /// <summary>
+        /// Method call coming from each client to indicate a scene has changed.
+        /// </summary>
+        private void OnClientSceneChange(NetworkConnection client, ClientSceneChangeBroadcast msg, Channel channel) 
         {
-            if(networkManager == null)
-                return;
+            if(msg.cause == ClientSceneChangeBroadcast.Cause.LOAD) {
+                // Ensure the client is in the target scenes list.
+                if(!targetScenes.ContainsKey(client)) {
+                    Debug.LogWarning("Can't check if client loaded target scenes, they don't have any target scenes.");
+                    return;
+                }
 
-            networkManager.ServerManager.OnServerConnectionState += ServerManager_OnServerConnectionState;
-            networkManager = null;
-        }
+                HashSet<SceneLookupData> updatedSceneSet = msg.scenes.ToHashSet();
+                HashSet<SceneLookupData> targetSet = targetScenes[client].ToHashSet();
 
-        private void ServerManager_OnServerConnectionState(ServerConnectionStateArgs args)
-        {
-            if(args.ConnectionState == LocalConnectionState.Started) {
-                GameObject instantiated = Instantiate(NetworkedSceneControllerPrefab);
-                InstanceFinder.ServerManager.Spawn(instantiated.GetComponent<NetworkObject>());
+                if(updatedSceneSet.SetEquals(targetSet)) {
+                    LoadedTargetScenes?.Invoke(targetScenes[client], client);
+                    BLog.Log($"Client id \"{client.ClientId}\" loaded target scene set.", logSettings, 1);
+                }
             }
         }
+
+        /// <summary>
+        /// Method call coming from the server to indicate to a client what set of scenes they
+        ///   should have loaded.
+        /// Will set targetScenes array to the scene set from the server.
+        /// </summary>
+        private void OnSceneSync(SceneSyncBroadcast broadcast, Channel channel)
+        {
+            // Check if the client scene list is set and warn if so, the client scene list is
+            //   cleared once it loads all target scenes.
+            if(clientTargetScenes != null)
+                Debug.LogWarning("Recieved a SceneSyncBroadcast even though we're still loading scenes!");
+
+            clientTargetScenes = broadcast.scenes;
+
+            for(int i = 0; i < clientTargetScenes.Count; i++) {
+                // The first scene should be loaded as single, the following scenes should be additive.
+                LoadSceneMode mode = i == 0 ? LoadSceneMode.Single : LoadSceneMode.Additive;
+                SceneLookupData sld = clientTargetScenes[i];
+                UnityEngine.SceneManagement.SceneManager.LoadScene(sld.Name, mode);
+            }
+
+            BLog.Log("Recieved scene sync broadcast, loading scenes", logSettings, 1);
+        }
 #endregion
 
-        private SceneLookupData ActiveSceneLookupData { get { 
-            Scene active = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
-            return new(active.handle, active.name);
-        } }
+    }
 
+    public static class SceneControllerExtensions 
+    {
+        public static SceneLookupData GetSceneLookupData(this Scene scene) => new(scene.handle, scene.name);
     }
 }
