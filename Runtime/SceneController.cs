@@ -4,11 +4,6 @@ using System.Collections.Generic;
 using System.Linq;
 using EMullen.Core;
 using FishNet;
-using FishNet.Connection;
-using FishNet.Managing;
-using FishNet.Managing.Scened;
-using FishNet.Object;
-using FishNet.Transporting;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.SceneManagement;
@@ -61,7 +56,6 @@ namespace EMullen.SceneMgmt {
 #region Initializers
         private void Awake() 
         {
-            BLog.Log("SceneController woke up", logSettings, 0);
             if(Instance != null)
                 throw new InvalidOperationException("Tried to create a new SceneDelegate when one already exists.");
 
@@ -71,7 +65,7 @@ namespace EMullen.SceneMgmt {
         }
         
         private void OnEnable() 
-        { 
+        {
             UnityEngine.SceneManagement.SceneManager.sceneLoaded += UnitySceneManager_SceneLoaded;
             UnityEngine.SceneManagement.SceneManager.sceneUnloaded += UnitySceneManager_SceneUnloaded;
 
@@ -79,7 +73,8 @@ namespace EMullen.SceneMgmt {
             InstanceFinder.ServerManager.RegisterBroadcast<ClientSceneChangeBroadcast>(OnClientSceneChange);
         }
 
-        private void OnDisable() { 
+        private void OnDisable() 
+        {
             UnityEngine.SceneManagement.SceneManager.sceneLoaded -= UnitySceneManager_SceneLoaded;
             UnityEngine.SceneManagement.SceneManager.sceneUnloaded -= UnitySceneManager_SceneUnloaded;
 
