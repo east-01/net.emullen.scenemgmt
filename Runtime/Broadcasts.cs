@@ -29,12 +29,27 @@ namespace EMullen.SceneMgmt
         public enum Cause { LOAD, UNLOAD }
     }
 
+    public struct ClientNetworkedScene : IBroadcast 
+    {
+        public SceneLookupData scene;
+        public Action action;
+
+        public ClientNetworkedScene(SceneLookupData scene, Action action) {
+            this.scene = scene;
+            this.action = action;
+        }
+
+        public enum Action { ADD, REMOVE }
+    }
+
     public struct SceneSyncBroadcast : IBroadcast 
     {
         public List<SceneLookupData> scenes;
-        public SceneSyncBroadcast(List<SceneLookupData> scenes) 
+        public SceneLookupData activeScene;
+        public SceneSyncBroadcast(List<SceneLookupData> scenes, SceneLookupData activeScene = null) 
         {
             this.scenes = scenes;
+            this.activeScene = activeScene;
         }
     }
 }
