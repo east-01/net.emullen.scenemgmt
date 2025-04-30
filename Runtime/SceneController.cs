@@ -1,16 +1,14 @@
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using EMullen.Core;
 using FishNet;
 using FishNet.Connection;
 using FishNet.Managing.Scened;
-using FishNet.Object;
 using FishNet.Transporting;
 using UnityEngine;
-using UnityEngine.EventSystems;
 using UnityEngine.SceneManagement;
+
 
 namespace EMullen.SceneMgmt {
     /// <summary>
@@ -21,7 +19,7 @@ namespace EMullen.SceneMgmt {
     /// Events are called from here, so we'll be able to trust that the SceneController's events
     ///   we subscribe to will stay the same even if the network changes.
     /// </summary>
-    public class SceneController : MonoBehaviour
+    public partial class SceneController : MonoBehaviour
     {
 
         public static SceneController Instance;
@@ -38,13 +36,6 @@ namespace EMullen.SceneMgmt {
         }).ToList();
 
         private List<Scene> serverScenes = new(); 
-        /// <summary>
-        /// A dictionary containing the client and the scene lookup data that the client is loading
-        ///   and waiting to join.
-        /// Will be watched in Update() and wait for clients to load their target scenes to add
-        ///   them into it.
-        /// </summary>
-        private Dictionary<NetworkConnection, SceneLookupData> clientsLoadingScenes = new();
 
         /// <summary>
         /// For the server: A dictionary containing the client connections and that client's list
@@ -56,12 +47,6 @@ namespace EMullen.SceneMgmt {
         ///   of target scenes.
         /// </summary>
         private Dictionary<NetworkConnection, List<SceneLookupData>> targetScenes = new();
-
-        /// <summary>
-        /// For clients: The target list of scene lookup datas as specified by the server from a 
-        ///   SceneSyncBroadcast.
-        /// </summary>
-        private List<SceneLookupData> clientTargetScenes;
 
         public delegate void LoadedTargetScenesHandler(List<SceneLookupData> loadedScenes, NetworkConnection connection = null);
         /// <summary>
@@ -76,7 +61,7 @@ namespace EMullen.SceneMgmt {
         /// Event call signaling on the server that the scene list has changed, server side only.
         /// </summary>
         public event ServerSceneListChangeHandler ServerSceneListChangeEvent;
-        public delegate void ClientNetworkedSceneHandler(NetworkConnection client, SceneLookupData scene, ClientNetworkedScene.Action action);
+        public delegate void ClientNetworkedSceneHandler(NetworkConnection client, SceneLookupData scene, ClientNetworkedSceneAction action);
         /// <summary>
         /// Event call signaling a client has made a network interaction with a scene, server
         ///   side only.
@@ -96,24 +81,20 @@ namespace EMullen.SceneMgmt {
         
         private void OnEnable() 
         {
-            UnityEngine.SceneManagement.SceneManager.sceneLoaded += UnitySceneManager_SceneLoaded;
-            UnityEngine.SceneManagement.SceneManager.sceneUnloaded += UnitySceneManager_SceneUnloaded;
+            ClientOnEnable();
 
             InstanceFinder.SceneManager.OnLoadEnd += FishSceneManager_LoadEnd;
 
-            InstanceFinder.ClientManager.RegisterBroadcast<SceneSyncBroadcast>(OnSceneSync);
-            InstanceFinder.ClientManager.RegisterBroadcast<ClientNetworkedScene>(OnClientNetworkedScene);
             InstanceFinder.ServerManager.RegisterBroadcast<ClientSceneChangeBroadcast>(OnClientSceneChange);
             InstanceFinder.ServerManager.RegisterBroadcast<ClientNetworkedScene>(OnClientRequestNetworkedScene);
         }
 
         private void OnDisable() 
         {
-            UnityEngine.SceneManagement.SceneManager.sceneLoaded -= UnitySceneManager_SceneLoaded;
-            UnityEngine.SceneManagement.SceneManager.sceneUnloaded -= UnitySceneManager_SceneUnloaded;
+            ClientOnDisable();
 
-            InstanceFinder.ClientManager.UnregisterBroadcast<SceneSyncBroadcast>(OnSceneSync);
-            InstanceFinder.ClientManager.UnregisterBroadcast<ClientNetworkedScene>(OnClientNetworkedScene);
+            InstanceFinder.SceneManager.OnLoadEnd -= FishSceneManager_LoadEnd;
+
             InstanceFinder.ServerManager.UnregisterBroadcast<ClientSceneChangeBroadcast>(OnClientSceneChange);
             InstanceFinder.ServerManager.UnregisterBroadcast<ClientNetworkedScene>(OnClientRequestNetworkedScene);
         }
@@ -121,11 +102,42 @@ namespace EMullen.SceneMgmt {
 
         private void Update() 
         {
-            foreach(NetworkConnection client in new List<NetworkConnection>(clientsLoadingScenes.Keys)) {
-                // BLog.Highlight("Searching for " + clientsLoadingScenes[client] + " in loaded scenes: " + string.Join(", ", loadedScenes[client]));
-                // Attempt to add the client to the scene
-                AddClientToScene(client, clientsLoadingScenes[client]);
+            Dictionary<Scene, HashSet<NetworkConnection>> sceneConnections = InstanceFinder.SceneManager.SceneConnections;
+
+            // Try to add clients to their networked scenes.
+            foreach(NetworkConnection client in new List<NetworkConnection>(targetScenes.Keys)) {
+                if(!targetScenes.ContainsKey(client))
+                    continue;
+
+                HashSet<SceneLookupData> loadedSet = loadedScenes[client].ToHashSet();
+                HashSet<SceneLookupData> targetSet = targetScenes[client].ToHashSet();
+
+                IEnumerable<SceneLookupData> loadedTargets = loadedSet.Intersect(targetSet);
+                foreach(SceneLookupData loadedTarget in loadedTargets) {
+                    Scene? sceneNullable = sceneConnections.Keys.Search(loadedTarget);
+                    if(!sceneNullable.HasValue) {
+                        // TODO: Warning to handle this case
+                        Debug.LogWarning("LoadedTarget scene is null, this shouldn't happen unless a scene unloads.");
+                        continue;
+                    }
+                    
+                    Scene scene = sceneNullable.Value;
+                    if(!sceneConnections[scene].Contains(client))
+                        AddClientToScene(client, scene.GetSceneLookupData());
+                }
+
             }
+        }
+
+        public void LoadServerScene(SceneLookupData lookupData) 
+        {
+            SceneLoadData sld = new(lookupData);
+
+            if(InstanceFinder.IsHostStarted) {
+                sld.ReplaceScenes = ReplaceOption.All;
+            }
+
+            InstanceFinder.SceneManager.LoadConnectionScenes(sld);
         }
 
         /// <summary>
@@ -139,55 +151,43 @@ namespace EMullen.SceneMgmt {
             if(!InstanceFinder.IsServerStarted)
                 throw new InvalidOperationException("Can't load scenes for client. Server isn't started.");
 
+            BLog.Highlight($"Telling conn {conn} to load scenes: {string.Join(", ", sceneLoadSet)}");
+
+            if(targetScenes.ContainsKey(conn)) {
+                Debug.LogWarning($"Overriding loading scenes on connection {conn}! Was \"{string.Join(", ", targetScenes[conn])}\" is now \"{string.Join(", ", sceneLoadSet)}\"");
+                targetScenes.Remove(conn);
+            }
+
+            targetScenes.Add(conn, sceneLoadSet);
+
             SceneSyncBroadcast broadcast = new(sceneLoadSet);
             InstanceFinder.ServerManager.Broadcast(conn, broadcast);
         }
 
-#region Event Handlers
-        /// <summary>
-        /// Unity scene manager scene loaded event callback. Used by clients to notify the server
-        ///   of local scene changes.
-        /// </summary>
-        private void UnitySceneManager_SceneLoaded(Scene scene, LoadSceneMode loadSceneMode)  
+        public void AddClientToScene(NetworkConnection client, SceneLookupData sceneLookupData) 
         {
-            // We're only synchronizing the clients.
-            if(!InstanceFinder.IsClientStarted)
+            if(!InstanceFinder.IsServerStarted)
+                throw new InvalidOperationException("Can't add client to scene, server isn't started.");
+
+            if(!client.IsValid) {
+                Debug.LogError("Can't add client to scene, client isn't valid!");
                 return;
-
-            BLog.Log($"SceneController loaded \"{scene.name}\". Signaling to server.", logSettings, 0);
-            ClientSceneChangeBroadcast broadcast = ClientSceneChangeBroadcast.LoadBroadcastFactory(LoadedScenes, scene.GetSceneLookupData(), loadSceneMode);
-            InstanceFinder.ClientManager.Broadcast(broadcast);
-
-            if(LoadedScenes != null && clientTargetScenes != null && LoadedScenes.ToHashSet().SetEquals(clientTargetScenes.ToHashSet())) {
-                LoadedTargetScenes?.Invoke(clientTargetScenes);
-                clientTargetScenes = null;
-                BLog.Log("Loaded target scenes locally.", logSettings, 1);
             }
+
+            Scene? sceneNullable = serverScenes.Search(sceneLookupData, true);
+            if(!sceneNullable.HasValue)
+                throw new InvalidOperationException($"Can't add client to scene \"{sceneLookupData}\" it is not loaded in server scenes.");
+
+            Scene scene = sceneNullable.Value;
+
+            InstanceFinder.SceneManager.AddConnectionToScene(client, scene);
+            
+            ClientNetworkedScene broadcast = new(scene.GetSceneLookupData(), ClientNetworkedSceneAction.ADD);
+            InstanceFinder.ServerManager.Broadcast(client, broadcast);
+            ClientNetworkedSceneEvent?.Invoke(client, scene.GetSceneLookupData(), ClientNetworkedSceneAction.ADD);
         }
 
-        private void UnitySceneManager_SceneUnloaded(Scene scene) 
-        {
-            // We're only synchronizing the clients.
-            if(!InstanceFinder.IsClientStarted)
-                return;
-
-            BLog.Log($"SceneController unloaded \"{scene.name}\". Signaling to server.", logSettings, 0);
-            ClientSceneChangeBroadcast broadcast = ClientSceneChangeBroadcast.UnloadBroadcastFactory(LoadedScenes, scene.GetSceneLookupData());
-            InstanceFinder.ClientManager.Broadcast(broadcast);
-        }
-
-        private void FishSceneManager_LoadEnd(SceneLoadEndEventArgs args)
-        {
-            foreach(Scene scene in args.LoadedScenes) {
-                if(serverScenes.Contains(scene)) 
-                    Debug.LogWarning("Fishnet loaded a scene even though it's already in the server scenes list.");
-
-                serverScenes.Add(scene);
-                ServerSceneListChangeEvent?.Invoke(scene.GetSceneLookupData(), serverScenes, true);
-                BLog.Log($"FishNet SceneManager loaded scene {scene.GetSceneLookupData()}");
-            }
-        }
-
+#region Broadcasts
         /// <summary>
         /// Method call coming from each client to indicate a scene has changed.
         /// </summary>
@@ -222,19 +222,6 @@ namespace EMullen.SceneMgmt {
         }
 
         /// <summary>
-        /// Method call coming from the server to indicate to the client that they were 
-        ///   added/removed from a networked scene.
-        /// </summary>
-        /// <param name="scene">The scene they were</param>
-        /// <param name="channel"></param>
-        /// <exception cref="NotImplementedException"></exception>
-        private void OnClientNetworkedScene(ClientNetworkedScene msg, Channel channel)
-        {
-            if(msg.action == ClientNetworkedScene.Action.ADD)
-                UnityEngine.SceneManagement.SceneManager.SetActiveScene(UnityEngine.SceneManagement.SceneManager.GetSceneByName(msg.scene.Name));
-        }
-
-        /// <summary>
         /// Method call coming from a client to request a networked scene action.
         /// </summary>
         /// <param name="client">The client requesting the action</param>
@@ -242,91 +229,58 @@ namespace EMullen.SceneMgmt {
         /// <param name="channel"></param>
         private void OnClientRequestNetworkedScene(NetworkConnection client, ClientNetworkedScene msg, Channel channel) 
         {
-            if(msg.action == ClientNetworkedScene.Action.ADD) {
+            if(msg.action == ClientNetworkedSceneAction.ADD) {
                 AddClientToScene(client, msg.scene);
             } else {
                 Debug.LogError("TODO: Implement RemoveClientFromScene");
             }
         }
-
-        /// <summary>
-        /// Method call coming from the server to indicate to a client what set of scenes they
-        ///   should have loaded.
-        /// Will set targetScenes array to the scene set from the server.
-        /// </summary>
-        private void OnSceneSync(SceneSyncBroadcast broadcast, Channel channel)
-        {
-            // Check if the client scene list is set and warn if so, the client scene list is
-            //   cleared once it loads all target scenes.
-            if(clientTargetScenes != null)
-                Debug.LogWarning("Recieved a SceneSyncBroadcast even though we're still loading scenes!");
-
-            clientTargetScenes = broadcast.scenes;
-
-            for(int i = 0; i < clientTargetScenes.Count; i++) {
-                // The first scene should be loaded as single, the following scenes should be additive.
-                LoadSceneMode mode = i == 0 ? LoadSceneMode.Single : LoadSceneMode.Additive;
-                SceneLookupData sld = clientTargetScenes[i];
-                UnityEngine.SceneManagement.SceneManager.LoadScene(sld.Name, mode);
-            }
-
-            BLog.Log("Recieved scene sync broadcast, loading scenes", logSettings, 1);
-        }
 #endregion
 
-#region Server Scene Management
-        public void LoadServerScene(SceneLookupData lookupData) 
+#region Events
+        private void FishSceneManager_LoadEnd(SceneLoadEndEventArgs args)
         {
-            SceneLoadData sld = new(lookupData);
-            InstanceFinder.SceneManager.LoadConnectionScenes(sld);
-        }
+            foreach(Scene scene in args.LoadedScenes) {
+                if(serverScenes.Contains(scene)) 
+                    Debug.LogWarning("Fishnet loaded a scene even though it's already in the server scenes list.");
 
-        public void AddClientToScene(NetworkConnection client, SceneLookupData sceneLookupData) 
-        {
-            if(!InstanceFinder.IsServerStarted) {
-                ServerRpcAddClientToScene(client, sceneLookupData);
-                return;
-            }
-            if(!client.IsValid) {
-                Debug.LogError("Can't add client to scene, client isn't valid!");
-                return;
-            }
+                serverScenes.Add(scene);
+                ServerSceneListChangeEvent?.Invoke(scene.GetSceneLookupData(), serverScenes, true);
+                BLog.Log($"FishNet SceneManager loaded scene {scene.GetSceneLookupData()}");
 
-            bool isSceneLoaded = false;
-            if(sceneLookupData.Handle != 0)
-                isSceneLoaded = serverScenes.Select(scene => scene.GetSceneLookupData()).Contains(sceneLookupData);
-            else if(serverScenes.Any(scene => scene.GetSceneLookupData().Name == sceneLookupData.Name)) {
-                sceneLookupData = serverScenes.First(scene => scene.GetSceneLookupData().Name == sceneLookupData.Name).GetSceneLookupData();
-                isSceneLoaded = sceneLookupData.IsValid;
-            }
+                if(InstanceFinder.IsHostStarted) {
+                    BLog.Log($"  Host is started, treating FishNet SceneManager load as a client load {scene.GetSceneLookupData()}");
+    
+                    LoadSceneMode loadSceneMode = args.LoadedScenes.Count() == 1 ? LoadSceneMode.Single : LoadSceneMode.Additive;
+                    ClientSceneChangeBroadcast broadcast = ClientSceneChangeBroadcast.LoadBroadcastFactory(LoadedScenes, scene.GetSceneLookupData(), loadSceneMode);
+                    InstanceFinder.ClientManager.Broadcast(broadcast);
 
-            // If the scene isn't loaded they need to be put in the loading queue.
-            if(!isSceneLoaded) {
-                if(!clientsLoadingScenes.ContainsKey(client)) {
-                    clientsLoadingScenes.Add(client, sceneLookupData);
+                    CheckClientLoadedScenes();
                 }
-                return;
             }
-            
-            // In case this client was in the queue when this call was made, remove them
-            if(clientsLoadingScenes.ContainsKey(client) && isSceneLoaded) {
-                clientsLoadingScenes.Remove(client);
-            }
-
-            Scene scene = serverScenes.First(scene => scene.GetSceneLookupData() == sceneLookupData);
-            InstanceFinder.SceneManager.AddConnectionToScene(client, scene);
-            ClientNetworkedScene broadcast = new(scene.GetSceneLookupData(), ClientNetworkedScene.Action.ADD);
-            InstanceFinder.ServerManager.Broadcast(client, broadcast);
-            ClientNetworkedSceneEvent?.Invoke(client, scene.GetSceneLookupData(), ClientNetworkedScene.Action.ADD);
         }
-
-        private void ServerRpcAddClientToScene(NetworkConnection client, SceneLookupData sceneLookupData) => AddClientToScene(client, sceneLookupData);
 #endregion
-
     }
 
     public static class SceneControllerExtensions 
     {
         public static SceneLookupData GetSceneLookupData(this Scene scene) => new(scene.handle, scene.name);
+        public static SceneLookupData GetSceneLookupData(this UnloadedScene scene) => new(scene.Handle, scene.Name);
+        public static Scene? Search(this IEnumerable<Scene> list, SceneLookupData target, bool allowNameOnly=false) 
+        {
+            // Try to perform relaxed search with name only if handle is zero
+            if(target.Handle == 0 && allowNameOnly) {
+                if(!list.Any(sld => sld.GetSceneLookupData().Name == target.Name))
+                    return null;
+
+                Scene firstResult = list.First(sld => sld.GetSceneLookupData().Name == target.Name);
+                return firstResult;
+            }
+
+            if(!list.Any(scene => scene.GetSceneLookupData() == target))
+                return null;
+
+            return list.First(sld => sld.GetSceneLookupData() == target);
+        }
     }
 }

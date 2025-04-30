@@ -6,7 +6,7 @@ using UnityEngine.SceneManagement;
 
 namespace EMullen.SceneMgmt 
 {
-    public struct ClientSceneChangeBroadcast : IBroadcast 
+    internal struct ClientSceneChangeBroadcast : IBroadcast 
     {
         public List<SceneLookupData> scenes;
         public SceneLookupData latestSceneLoad;
@@ -29,20 +29,20 @@ namespace EMullen.SceneMgmt
         public enum Cause { LOAD, UNLOAD }
     }
 
-    public struct ClientNetworkedScene : IBroadcast 
+    internal struct ClientNetworkedScene : IBroadcast 
     {
         public SceneLookupData scene;
-        public Action action;
+        public ClientNetworkedSceneAction action;
 
-        public ClientNetworkedScene(SceneLookupData scene, Action action) {
+        public ClientNetworkedScene(SceneLookupData scene, ClientNetworkedSceneAction action) {
             this.scene = scene;
             this.action = action;
         }
 
-        public enum Action { ADD, REMOVE }
     }
+    public enum ClientNetworkedSceneAction { ADD, REMOVE }
 
-    public struct SceneSyncBroadcast : IBroadcast 
+    internal struct SceneSyncBroadcast : IBroadcast 
     {
         public List<SceneLookupData> scenes;
         public SceneLookupData activeScene;
