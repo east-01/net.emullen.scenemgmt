@@ -24,7 +24,7 @@ namespace EMullen.SceneMgmt {
 
         public static SceneController Instance;
 
-        public BLogChannel logSettings;
+        public LogChannel logSettings;
 
         private SceneLookupData ActiveSceneLookupData => UnityEngine.SceneManagement.SceneManager.GetActiveScene().GetSceneLookupData();
         private List<SceneLookupData> LoadedScenes => BuildProcessor.Scenes.ToList()
