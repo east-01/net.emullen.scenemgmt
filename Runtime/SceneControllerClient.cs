@@ -55,7 +55,7 @@ namespace EMullen.SceneMgmt
 
             LoadedTargetScenes?.Invoke(clientTargetScenes);
             clientTargetScenes = null;
-            BLog.Log("Loaded target scenes locally.", logSettings, 1);
+            BLog.Log("Loaded target scenes locally.", LOG_CHANNEL_ID, 1);
         }
 
 #region Broadcasts
@@ -80,7 +80,7 @@ namespace EMullen.SceneMgmt
                 UnityEngine.SceneManagement.SceneManager.LoadScene(sld.Name, mode);
             }
 
-            BLog.Log($"Recieved scene sync broadcast, loading scenes: {string.Join(", ", clientTargetScenes)}", logSettings, 1);
+            BLog.Log($"Recieved scene sync broadcast, loading scenes: {string.Join(", ", clientTargetScenes)}", LOG_CHANNEL_ID, 1);
         }
 
         /// <summary>
@@ -105,7 +105,7 @@ namespace EMullen.SceneMgmt
             if(!InstanceFinder.IsClientStarted)
                 return;
 
-            BLog.Log($"SceneController loaded \"{scene.name}\". Signaling to server.", logSettings, 0);
+            BLog.Log($"SceneController loaded \"{scene.name}\". Signaling to server.", LOG_CHANNEL_ID, 0);
             ClientSceneChangeBroadcast broadcast = ClientSceneChangeBroadcast.LoadBroadcastFactory(LoadedScenes, scene.GetSceneLookupData(), loadSceneMode);
             InstanceFinder.ClientManager.Broadcast(broadcast);
 
@@ -118,7 +118,7 @@ namespace EMullen.SceneMgmt
             if(!InstanceFinder.IsClientStarted)
                 return;
 
-            BLog.Log($"SceneController unloaded \"{scene.name}\". Signaling to server.", logSettings, 0);
+            BLog.Log($"SceneController unloaded \"{scene.name}\". Signaling to server.", LOG_CHANNEL_ID, 0);
             ClientSceneChangeBroadcast broadcast = ClientSceneChangeBroadcast.UnloadBroadcastFactory(LoadedScenes, scene.GetSceneLookupData());
             InstanceFinder.ClientManager.Broadcast(broadcast);
         }

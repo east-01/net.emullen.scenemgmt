@@ -23,8 +23,7 @@ namespace EMullen.SceneMgmt {
     {
 
         public static SceneController Instance;
-
-        public LogChannel logSettings;
+        private const string LOG_CHANNEL_ID = "SceneController";
 
         private SceneLookupData ActiveSceneLookupData => UnityEngine.SceneManagement.SceneManager.GetActiveScene().GetSceneLookupData();
         private List<SceneLookupData> LoadedScenes => BuildProcessor.Scenes.ToList()
@@ -216,7 +215,7 @@ namespace EMullen.SceneMgmt {
 
                 if(updatedSceneSet.SetEquals(targetSet)) {
                     LoadedTargetScenes?.Invoke(targetScenes[client], client);
-                    BLog.Log($"Client id \"{client.ClientId}\" loaded target scene set.", logSettings, 1);
+                    BLog.Log($"Client id \"{client.ClientId}\" loaded target scene set.", LOG_CHANNEL_ID, 1);
                 }
             }
         }
